@@ -15,7 +15,7 @@ func TestFrontpageRedirectsToGitHub(t *testing.T) {
 	if res.StatusCode != http.StatusFound {
 		t.Fatalf("status %d", res.StatusCode)
 	}
-	if loc := res.Header.Get("Location"); loc != "https://github.com/OpenDiscoveryBiz/dk-provider" {
+	if loc := res.Header.Get("Location"); loc != "https://github.com/OpenDiscoveryBiz/backend" {
 		t.Fatalf("location %s", loc)
 	}
 }

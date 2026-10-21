@@ -31,7 +31,7 @@ func (s *Service) Handler() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "https://github.com/OpenDiscoveryBiz/root-provider", http.StatusFound)
+		http.Redirect(w, r, "https://github.com/OpenDiscoveryBiz/backend", http.StatusFound)
 	})
 	r.Get("/.well-known/opendiscovery/{id}.json", s.lookup)
 	return r
