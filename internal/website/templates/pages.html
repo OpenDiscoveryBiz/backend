@@ -1,0 +1,180 @@
+{{define "shell"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenDiscovery - {{.Title}}</title>
+{{if .CSS}}<link rel="stylesheet" href="{{.CSS}}">{{end}}
+</head>
+<body>
+{{template "nav" .}}
+<div class="container">
+{{.Body}}
+</div>
+{{if .JS}}<script src="{{.JS}}"></script>{{end}}
+</body>
+</html>
+{{end}}
+
+{{define "nav"}}
+<nav class="navbar navbar-inverse navbar-fixed-top">
+    <div class="container">
+        <div class="navbar-header">
+            <button type="button" class="navbar-toggle collapsed" data-toggle="collapse" data-target="#navbar" aria-expanded="false" aria-controls="navbar">
+                <span class="sr-only">Toggle navigation</span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+                <span class="icon-bar"></span>
+            </button>
+            <a class="navbar-brand" href="/">OpenDiscovery</a>
+        </div>
+        <div id="navbar" class="collapse navbar-collapse">
+            <ul class="nav navbar-nav">
+                <li class="{{if eq .Active "home"}}active{{end}}"><a href="/">Home</a></li>
+                <li class="{{if eq .Active "resolver"}}active{{end}}"><a href="/resolver">Resolver</a></li>
+                <li class="{{if eq .Active "publisher"}}active{{end}}"><a href="/publisher">Publisher</a></li>
+                <li class="{{if eq .Active "specifications"}}active{{end}}"><a href="/specifications">Specifications</a></li>
+                <li class="{{if eq .Active "investigator"}}active{{end}}"><a href="/investigator">Investigator</a></li>
+            </ul>
+        </div>
+    </div>
+</nav>
+{{end}}
+
+{{define "home"}}
+<h1>OpenDiscovery</h1>
+
+<p>The OpenDiscovery project is an open source implementation of various building blocks to enable <a href="https://www.bedreid.dk/distributed_business_service_discovery" target="_blank">Distributed Business Service Discovery</a>.</p>
+
+<p>The purpose of OpenDiscovery is to facilitate the creation of a new - initially local but potentially global - ecosystem for exchange of products and services.</p>
+
+<p>This will be accomplished by providing tools enabling vendors to exhibit their services in a way that allows potential consumers to discover them without the need for a common intermediary.</p>
+
+<p>The central OpenDiscovery components are the <a href="/resolver">Resolver</a> and the <a href="/publisher">Business Publisher</a>, while the first "visible" end user component is the <a href="/investigator">Business Investigator</a> browser extension. Repositories for all components are available on <a href="https://github.com/OpenDiscoveryBiz" target="_blank">Github</a> and are open for collaboration with respect to business issues as well as technical issues.</p>
+
+<p>Key prerequisites for Distributed Service Discovery are:</p>
+<ul>
+    <li>an authoritative association between registered business entities and their online services.</li>
+    <li>semantic structures that allow vendors to describe their services in standardized ways.</li>
+    <li>discovery methods enabling consumers to find and aggregate relevant vendor data.</li>
+</ul>
+
+<p>The benefits of Distributed Service Discovery include:</p>
+<ul>
+    <li><b>Once-only Principle:</b> A business only needs to publish information about its services at one place.</li>
+    <li><b>Big Data Analysis:</b> It becomes much easier for third parties to gather reliable data about business entities.</li>
+    <li><b>Identity Validation:</b> Provides an easier, cheaper, and more flexible alternative to EV-Certificates.</li>
+    <li><b>Privacy & Consent:</b> Consent can be managed in the aggregation and prioritization tools, so consumers will only be forwarded to business entities that comply with their own privacy policies.</li>
+    <li><b>Significant savings:</b> Today, discovery costs (e.g. to GAFA's) typically amounts to 15-30 percent of the traded value. As Distributed Discovery ensures normal competition for vendor as well as consumer tools, this amount can be expected to drop significantly.</li>
+    <li><b>Platform independence:</b> No more need for vendors to register with several intermediaries to expose themselves to every consumer - or for consumers to register with more platforms to avoid the risk of missing attractive offers.</li>
+</ul>
+
+<p>The OpenDiscovery project is supported by<br>
+    <a href="https://www.peercraft.com" target="_blank">Peercraft ApS</a>
+</p>
+{{end}}
+
+{{define "resolver"}}
+<h1>Resolver</h1>
+
+<a href="/imgs/OpenDiscoveryResolver.png"><img src="/imgs/OpenDiscoveryResolver.png" style="max-width: 40%; float: right; margin: 0 0 1em 1em;"></a>
+
+<p>The Resolver is the central component of the OpenDiscovery project. Its task is to aquire information about a legal business entity based on the international version of its corporate ID. For businesses in the European Union this implies the EUID as defined in EU Regulation 2015/884 of 8 June 2015.</p>
+
+<p>The resolver distinguishes between two classes of information about a business:<br>
+    <b>Official: </b>Information retrieved from the business register<br>
+    <b>Voluntary: </b> Self-asserted and/or third party certified information exhibited by the business itself, e.g. using the OpenDiscovery <a href="/publisher">Business Publisher</a>.
+</p>
+
+<p>Technically the resolver works by:</p>
+<ul>
+    <li>Looking up the ID on the root provider, but is redirected to the country specific provider (<a href="https://root.opendiscovery.biz/.well-known/opendiscovery/DK33755341.json?pretty=1" target="_blank">See example</a>).</li>
+    <li>Then looking up the ID on the country specific provider. Here it's returned with the official attributes, and an address for the voluntary provider used by the business (<a href="https://dk.opendiscovery.biz/.well-known/opendiscovery/DK33755341.json?pretty=1" target="_blank">See example</a>).</li>
+    <li>Then looking up the ID on the voluntary provider. Here it's returned with the voluntary attributes offered by the business (<a href="https://www.peercraft.com/.well-known/opendiscovery/DK33755341.json?pretty=1" target="_blank">See example</a>).</li>
+    <li>Finally the resolver merges all the recevied data into one reply to the client (<a href="https://resolver.opendiscovery.biz/lookup?id=DK33755341&pretty=1" target="_blank">See example</a>).</li>
+</ul>
+
+<a name="result"></a>
+
+<h2>Test</h2>
+<p>Try it for yourself! Currently only Danish businesses are supported. Further contries coming later.</p>
+
+<form method="POST" action="/resolver#result" class="form-inline">
+    <div class="form-group">
+        <label for="businessId">ID</label>
+        <input type="text" name="id" class="form-control" id="businessId" placeholder="DK33755341" value="{{.ID}}">
+    </div>
+    <button type="submit" class="btn btn-success">Lookup</button>
+</form>
+{{if .Result}}
+<h2>Result</h2>
+<pre class="bg-info">{{.Result}}</pre>
+{{end}}
+{{end}}
+
+{{define "specifications"}}
+<h1>Specifications</h1>
+
+<p>OpenDiscovery relies on the mutual reference between the public record of a legal entity in its authoritative business register and a URL providing self-asserted or third party validated information about the entity and its services.</p>
+
+<p>So far the national business registers of Denmark, Norway, Finland, Belgium, The Netherlands, Bulgaria, Greece, and New Zealand have enabled legal entities to reference a URL in their public records.</p>
+
+<p>The default OpenDiscovery method for an entity to refer back to its official records and to voluntarily provide further reference to its services is using .well-known [RFC5785] with the requested IANA URI suffix "opendiscovery" to locate the files:</p>
+
+<p><b>host.json</b> referencing the internationalized BusinessID<br>
+    (example: <a href="https://www.peercraft.com/.well-known/opendiscovery/host.json">https://www.peercraft.com/.well-known/opendiscovery/host.json</a>)</p>
+
+<p><b>[BusinessID].json</b> containing (reference to) self-asserted and/or third party validated information about the entity<br>
+    (example: <a href="https://www.peercraft.com/.well-known/opendiscovery/DK33755341.json">https://www.peercraft.com/.well-known/opendiscovery/DK33755341.json</a>)</p>
+
+<p>Websites with pages representing different legal entities, may insert the HTTP header-field <b>X-OpenDiscovery-ID</b> with the respective BusinessID's as field value to override the BusinessID provided in host.json for these pages.</p>
+
+<p>The purpose of OpenDiscovery is to facilitate the creation of a new data driven ecosystem for exchange of products and services.</p>
+
+<p>An important foundation for this is the use of standardized schemas and taxonomies for the description of businesses and their services. Fortunately most of these are readily available. Examples of standards, schemas, and data sources that will be used to the extent possible are listed in <a href="https://github.com/OpenDiscoveryBiz/publisher/wiki/Standards,-Schemas,-and-Data" target="_blank">the wiki for the Publisher component</a>.</p>
+
+<p>As the work progresses, this page will be extended to become a specification overview and placeholder for relevant links to individual more specific parts of the OpenDiscovery specifications.</p>
+{{end}}
+
+{{define "investigator"}}
+<h1>Business Investigator</h1>
+
+<a href="/imgs/BusinessInvestigator2.png"><img src="/imgs/BusinessInvestigator2.png" style="max-width: 40%; float: right; margin: 0 0 1em 1em;"></a>
+
+<p>Business Investigator is a browser extension that enables a web site to document the authenticity of its claimed owner. This is done by resolving the BusinessID retrieved from a <a href="https://tools.ietf.org/html/rfc7230#section-3.2" target="_blank">HTTP header field</a>, a <a href="https://tools.ietf.org/html/rfc5785" target="_blank">.well-known address</a>, a <a href="https://tools.ietf.org/html/rfc6763" target="_blank">DNS record</a>, or an <a href="https://www.ietf.org/rfc/rfc5280.txt" target="_blank">SSL certificate</a> and comparing the list of URL's officially claimed by the company with the specific URL of the website or a specific webpage.</p>
+
+<p>The Business Investigator displays an icon next to the address bar. When clicking the icon a popup appears with selected relevant information about the website owner. This includes parts of the public records of the business entity as well as relevant selfasserted and third party attested claims.</p>
+
+<p>Business Investigator is available in Google's <a href="https://chrome.google.com/webstore/detail/business-investigator/kdnkelhohlogiebdcmicchkadjmkhdgm" target="_blank">Chrome webstore</a> and works with most Chrome based browsers.</p>
+
+<h2>DATA FLOW</h2>
+
+<p>(NOTE: Exclusively Business / Website Owner data - no user data involved)</p>
+
+<p>The purpose of the Business Investigator extension and the associated Resolver is to provide the user with authoritative and trustworthy information about the Business entity in charge of a visited website - all without revealing any information about the user to the website owner or any other party.</p>
+
+<p>To do this the extension needs to get the domain or page URL to look for a specific tag/header/file containing the asserted internationalized Business Registry ID.</p>
+
+<p>The Business ID claimed by the website owner - but no user data - is sent to the external Resolver in order to retrieve information from the Business Registry and optionally more trustworthy sources. The final process of verifying the binding between website and business entity is done locally by the extension.</p>
+
+<p>Business entity data may be cached by the Resolver for up to 24 hours to avoid excessive load on the data sources. But as they are not referenced to any user data, they cannot be used to compile any kind of web usage history for any specific users. Website / Business data is cached in the browser's memory only <a href="https://developer.chrome.com/docs/extensions/reference/api/storage#storage_areas" target="_blank">session storage</a>.</p>
+
+<h2>PRIVACY POLICY</h2>
+
+<p><b>User Data Collection</b><br>The extension does not collect any user data.</p>
+
+<p><b>User Data Handling</b><br>The extension does not process any user data.</p>
+
+<p><b>User Data Sharing</b><br>The extension does not share any user data with the developer or with third parties</p>
+
+<p><b>User Data Storage</b><br>The extension does not store any user data.</p>
+{{end}}
+
+{{define "publisher"}}
+<h1>Business Publisher</h1>
+
+<p>The Publisher will enable business professionals to create and edit service descriptions for their business entities. This will be equivalent to posting business profile data, product catalogues, and related information on a marketplace or sharing platform. The resulting JSON data may be hosted directly by the Business Publisher or exported for subsequent upload to the business entity's own web servers.</p>
+
+<p>When ready for beta-use, an implementation of the Business Publisher will be made freely available as a service at this location.</p>
+{{end}}

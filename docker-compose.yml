@@ -1,0 +1,86 @@
+services:
+  root-provider:
+    build:
+      context: .
+      target: runtime
+      args:
+        BIN: root-provider
+    image: ghcr.io/opendiscoverybiz/root-provider
+    read_only: true
+    privileged: false
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    ports:
+      - "18081:8000"
+    environment:
+      PROVIDER_DK: http://dk-provider:8000
+    depends_on:
+      - dk-provider
+    networks:
+      - opendiscovery
+
+  dk-provider:
+    build:
+      context: .
+      target: runtime
+      args:
+        BIN: dk-provider
+    image: ghcr.io/opendiscoverybiz/dk-provider
+    read_only: true
+    privileged: false
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    ports:
+      - "18082:8000"
+    environment:
+      ERST_CVR_USER: ${ERST_CVR_USER:-}
+      ERST_CVR_PASS: ${ERST_CVR_PASS:-}
+    networks:
+      - opendiscovery
+
+  resolver:
+    build:
+      context: .
+      target: runtime
+      args:
+        BIN: resolver
+    image: ghcr.io/opendiscoverybiz/resolver
+    read_only: true
+    privileged: false
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    ports:
+      - "18083:8000"
+    environment:
+      PROVIDER_ROOT: http://root-provider:8000
+    depends_on:
+      - root-provider
+    networks:
+      - opendiscovery
+
+  website:
+    build:
+      context: .
+      target: website
+    image: ghcr.io/opendiscoverybiz/website
+    read_only: true
+    privileged: false
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    ports:
+      - "18084:8000"
+    environment:
+      OPENDISCOVERY_RESOLVER: http://resolver:8000
+    depends_on:
+      - resolver
+    networks:
+      - opendiscovery
+
+networks:
+  opendiscovery:
+    name: opendiscovery
+    driver: bridge
