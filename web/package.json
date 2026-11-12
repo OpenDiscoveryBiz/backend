@@ -7,6 +7,6 @@
   "devDependencies": {
     "bootstrap-sass": "3.4.3",
     "sass": "1.108.1",
-    "vite": "8.3.6"
+    "vite": "8.3.7"
   }
 }
