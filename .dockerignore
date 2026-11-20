@@ -1,3 +1,4 @@
 .git
 web/node_modules
 internal/website/dist
+.DS_Store

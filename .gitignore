@@ -1,3 +1,4 @@
 web/node_modules/
 internal/website/dist/*
 !internal/website/dist/.gitkeep
+.DS_Store
