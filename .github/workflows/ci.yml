@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   test:
@@ -32,29 +33,12 @@ jobs:
         run: go test ./...
 
   docker:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
-    permissions:
-      contents: read
-      packages: write
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: dk-provider
-            target: runtime
-            bin: dk-provider
-          - name: root-provider
-            target: runtime
-            bin: root-provider
-          - name: resolver
-            target: runtime
-            bin: resolver
-          - name: website
-            target: website
-            bin: website
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -65,7 +49,7 @@ jobs:
       - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
-          images: ghcr.io/opendiscoverybiz/${{ matrix.name }}
+          images: ghcr.io/opendiscoverybiz/backend
           tags: |
             type=sha,prefix=
             type=ref,event=branch
@@ -74,9 +58,57 @@ jobs:
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          target: ${{ matrix.target }}
-          build-args: |
-            BIN=${{ matrix.bin }}
-          push: true
+          load: true
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          image=$(printf '%s\n' "$TAGS" | head -n1)
+          cleanup() { docker rm -f od-root od-dk od-resolver od-website >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run -d --name od-root -p 127.0.0.1:18081:8000 "$image" root-provider
+          docker run -d --name od-dk -p 127.0.0.1:18082:8000 "$image" dk-provider
+          docker run -d --name od-resolver -p 127.0.0.1:18083:8000 "$image" resolver
+          docker run -d --name od-website -p 127.0.0.1:18084:8000 "$image" website
+          for _ in $(seq 1 30); do
+            root=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:18081/ || true)
+            dk=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:18082/ || true)
+            resolver=$(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:18083/ || true)
+            website=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18084/ || true)
+            if [ "$root" = "302 https://github.com/OpenDiscoveryBiz/backend" ] \
+              && [ "$dk" = "302 https://github.com/OpenDiscoveryBiz/backend" ] \
+              && [ "$resolver" = "302 https://github.com/OpenDiscoveryBiz/backend" ] \
+              && [ "$website" = "200" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "root=$root"
+          echo "dk=$dk"
+          echo "resolver=$resolver"
+          echo "website=$website"
+          docker logs od-root || true
+          docker logs od-dk || true
+          docker logs od-resolver || true
+          docker logs od-website || true
+          exit 1
+
+      - name: Push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker push "$tag"
+          done <<EOF
+          $TAGS
+          EOF
