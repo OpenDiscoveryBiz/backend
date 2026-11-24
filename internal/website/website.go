@@ -56,7 +56,7 @@ func New(cfg Config) *Service {
 		cfg.Resolver = "https://resolver.opendiscovery.biz"
 	}
 	if cfg.Client == nil {
-		cfg.Client = &http.Client{Timeout: 5 * time.Second, CheckRedirect: httpx.MaxRedirects(5)}
+		cfg.Client = &http.Client{Timeout: 20 * time.Second, CheckRedirect: httpx.MaxRedirects(5)}
 	}
 	tmpl := template.Must(template.ParseFS(templateFS, "templates/*.html"))
 	css, js := assetPaths()
@@ -69,6 +69,7 @@ func NewFromEnv() *Service {
 
 func (s *Service) Handler() http.Handler {
 	r := chi.NewRouter()
+	r.Use(securityHeaders)
 	r.Use(middleware.Recoverer)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "home", "Welcome", "home", "", "")
@@ -96,6 +97,15 @@ func (s *Service) Handler() http.Handler {
 		r.Handle("/assets/*", http.StripPrefix("/assets/", fileServer(assets)))
 	}
 	return r
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Service) resolverPage(w http.ResponseWriter, r *http.Request) {

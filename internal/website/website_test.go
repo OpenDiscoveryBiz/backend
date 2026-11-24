@@ -24,6 +24,20 @@ func TestPagesLoad(t *testing.T) {
 		if path == "/" && !strings.Contains(body, svc.css) {
 			t.Fatalf("home missing stylesheet: %s", body)
 		}
+		if res.Header.Get("X-Content-Type-Options") != "nosniff" {
+			t.Fatalf("%s nosniff %q", path, res.Header.Get("X-Content-Type-Options"))
+		}
+		csp := res.Header.Get("Content-Security-Policy")
+		if strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "style-src 'self'") {
+			t.Fatalf("%s csp %s", path, csp)
+		}
+		if path == "/resolver" && (!strings.Contains(body, "floated-figure") || strings.Contains(body, "style=")) {
+			t.Fatalf("resolver figure: %s", body)
+		}
+	}
+	cssRes, cssBody := get(t, ts.URL+svc.css)
+	if cssRes.StatusCode != http.StatusOK || !strings.Contains(cssBody, "floated-figure") {
+		t.Fatalf("css %d %s", cssRes.StatusCode, cssBody)
 	}
 	res, err := http.Get(ts.URL + "/imgs/OpenDiscoveryResolver.png")
 	if err != nil {

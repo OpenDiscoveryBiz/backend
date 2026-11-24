@@ -1,14 +1,19 @@
 package resolver
 
 import (
+	"container/list"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,21 +23,32 @@ import (
 	"github.com/OpenDiscoveryBiz/backend/internal/httpx"
 )
 
+const (
+	lookupBudget = 15 * time.Second
+	maxHops      = 5
+	maxProviders = 5
+	limitBurst   = 10
+	limitKeys    = 1024
+)
+
 type Config struct {
 	ProviderRoot string
 	TTLMin       int
 	TTLMax       int
 	TTLDefault   int
 	Client       *http.Client
+	PublicClient *http.Client
 }
 
 type Service struct {
-	roots      string
-	ttlMin     int
-	ttlMax     int
-	ttlDefault int
-	client     *http.Client
-	cache      *cache.Cache
+	roots        string
+	ttlMin       int
+	ttlMax       int
+	ttlDefault   int
+	client       *http.Client
+	publicClient *http.Client
+	cache        *cache.Cache
+	limit        *limiter
 }
 
 func New(cfg Config) *Service {
@@ -48,13 +64,18 @@ func New(cfg Config) *Service {
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Timeout: 5 * time.Second, CheckRedirect: httpx.NoRedirect}
 	}
+	if cfg.PublicClient == nil {
+		cfg.PublicClient = httpx.PublicClient(5 * time.Second)
+	}
 	return &Service{
-		roots:      cfg.ProviderRoot,
-		ttlMin:     cfg.TTLMin,
-		ttlMax:     cfg.TTLMax,
-		ttlDefault: cfg.TTLDefault,
-		client:     cfg.Client,
-		cache:      cache.New(),
+		roots:        cfg.ProviderRoot,
+		ttlMin:       cfg.TTLMin,
+		ttlMax:       cfg.TTLMax,
+		ttlDefault:   cfg.TTLDefault,
+		client:       cfg.Client,
+		publicClient: cfg.PublicClient,
+		cache:        cache.New(),
+		limit:        newLimiter(),
 	}
 }
 
@@ -89,6 +110,10 @@ type result struct {
 }
 
 func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
+	if !s.limit.allow(clientIP(r)) {
+		httpx.WriteJSON(w, http.StatusTooManyRequests, false, apiErr{Err: "rate_limited"})
+		return
+	}
 	raw := r.URL.Query().Get("id")
 	if raw == "" {
 		httpx.WriteJSON(w, http.StatusBadRequest, false, apiErr{Err: "missing_id"})
@@ -99,6 +124,9 @@ func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, false, apiErr{Err: "invalid_id"})
 		return
 	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), lookupBudget)
+	defer cancel()
 
 	var redirectKeys []string
 	for i := len(id) - 1; i > 1; i-- {
@@ -127,16 +155,15 @@ func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
 				providers = list
 			}
 		}
-		data, err := s.follow(providers, id, "official", true, seen)
+		data, err := s.follow(ctx, providers, id, "official", true, seen)
 		if err != nil {
-			official = map[string]any{
-				"type":           "official",
-				"error":          "upstream_down",
-				"error_detailed": err.Error(),
-			}
-		} else if data != nil {
+			slog.Error("official", "id", id, "err", err)
+			official = map[string]any{"type": "official", "error": "upstream_down"}
+		} else if data != nil && !hasError(data) {
 			official = data
 			s.cache.Set(id+"_official", official, s.expire(data["ttl"]))
+		} else {
+			official = data
 		}
 	}
 
@@ -149,22 +176,18 @@ func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
 		if v, ok := seen[id+"_voluntary"]; ok {
 			voluntary = v
 		} else {
-			data, err := s.follow(list, id, "voluntary", false, seen)
-			if err != nil {
-				voluntary = map[string]any{
-					"type":           "voluntary",
-					"error":          "upstream_down",
-					"error_detailed": err.Error(),
+			data, err := s.follow(ctx, list, id, "voluntary", false, seen)
+			if err != nil || (data != nil && hasError(data)) {
+				if err != nil {
+					slog.Error("voluntary", "id", id, "err", err)
+					voluntary = map[string]any{"type": "voluntary", "error": "upstream_down"}
+				} else {
+					voluntary = data
 				}
-			} else {
+				s.cache.Set(id+"_voluntary", voluntary, time.Duration(s.ttlMin)*time.Second)
+			} else if data != nil {
 				voluntary = data
-			}
-			if voluntary != nil {
-				ttl := any(nil)
-				if m, ok := voluntary.(map[string]any); ok {
-					ttl = m["ttl"]
-				}
-				s.cache.Set(id+"_voluntary", voluntary, s.expire(ttl))
+				s.cache.Set(id+"_voluntary", voluntary, s.expire(data["ttl"]))
 			}
 		}
 	} else {
@@ -173,18 +196,48 @@ func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
 
 	httpx.WriteJSON(w, http.StatusOK, httpx.Pretty(r), result{
 		ID:        id,
-		TTL:       3600,
+		TTL:       s.responseTTL(official, voluntary),
 		Official:  official,
 		Voluntary: voluntary,
 	})
 }
 
-func (s *Service) follow(providers []string, id, want string, cacheRedirect bool, seen map[string]any) (map[string]any, error) {
+func (s *Service) responseTTL(official map[string]any, voluntary any) int {
+	if official == nil || hasError(official) {
+		return 0
+	}
+	ttl := int(s.expire(official["ttl"]) / time.Second)
+	m, _ := voluntary.(map[string]any)
+	if m == nil {
+		return ttl
+	}
+	if !hasError(m) {
+		v := int(s.expire(m["ttl"]) / time.Second)
+		if v < ttl {
+			return v
+		}
+		return ttl
+	}
+	if asString(m["error"]) != "official_not_available" && s.ttlMin < ttl {
+		return s.ttlMin
+	}
+	return ttl
+}
+
+func (s *Service) follow(ctx context.Context, providers []string, id, want string, cacheRedirect bool, seen map[string]any) (map[string]any, error) {
+	public := want == "voluntary"
 	lastErr := ""
-	for range 5 {
+	for range maxHops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var data map[string]any
-		for i := 0; i < 2 && i < len(providers); i++ {
-			got, err := s.fetch(providers[i], id)
+		n := len(providers)
+		if n > maxProviders {
+			n = maxProviders
+		}
+		for i := range n {
+			got, err := s.fetch(ctx, providers[i], id, public)
 			if err != nil {
 				lastErr = err.Error()
 				data = nil
@@ -197,7 +250,7 @@ func (s *Service) follow(providers []string, id, want string, cacheRedirect bool
 			if want == "official" {
 				return nil, fmt.Errorf("Official providers down: %s", lastErr)
 			}
-			return nil, fmt.Errorf("voluntary providers down")
+			return nil, fmt.Errorf("voluntary providers down: %s", lastErr)
 		}
 		typ, _ := data["type"].(string)
 		if typ == want {
@@ -228,18 +281,29 @@ func (s *Service) follow(providers []string, id, want string, cacheRedirect bool
 		}
 		providers = next
 	}
-	return nil, nil
+	return nil, fmt.Errorf("too many redirects")
 }
 
-func (s *Service) fetch(host, id string) (map[string]any, error) {
+func (s *Service) fetch(ctx context.Context, host, id string, public bool) (map[string]any, error) {
 	host = strings.TrimRight(host, "/")
 	endpoint := host + "/.well-known/opendiscovery/" + url.PathEscape(id) + ".json"
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, fmt.Errorf("unsupported scheme")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "OpenDiscoveryResolver (+https://www.opendiscovery.biz/)")
-	resp, err := s.client.Do(req)
+	client := s.client
+	if public {
+		client = s.publicClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -363,4 +427,58 @@ func asInt(v any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// 60 requests per minute, burst 10. The map drops the oldest address past limitKeys.
+type limiter struct {
+	mu    sync.Mutex
+	items map[string]*bucket
+	order *list.List
+}
+
+type bucket struct {
+	key  string
+	el   *list.Element
+	tok  float64
+	last time.Time
+}
+
+func newLimiter() *limiter {
+	return &limiter{items: map[string]*bucket{}, order: list.New()}
+}
+
+func (l *limiter) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	b, ok := l.items[key]
+	if ok {
+		l.order.MoveToFront(b.el)
+		b.tok += now.Sub(b.last).Seconds()
+		if b.tok > limitBurst {
+			b.tok = limitBurst
+		}
+	} else {
+		if l.order.Len() >= limitKeys {
+			old := l.order.Remove(l.order.Back()).(*bucket)
+			delete(l.items, old.key)
+		}
+		b = &bucket{key: key, tok: limitBurst}
+		b.el = l.order.PushFront(b)
+		l.items[key] = b
+	}
+	b.last = now
+	if b.tok < 1 {
+		return false
+	}
+	b.tok--
+	return true
 }

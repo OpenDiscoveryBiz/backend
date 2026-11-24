@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   test:
@@ -33,7 +32,11 @@ jobs:
         run: go test ./...
 
   docker:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
     strategy:
       matrix:

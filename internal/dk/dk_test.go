@@ -102,15 +102,15 @@ func TestLookupReturnsCompanyFromCVR(t *testing.T) {
 		`"id":"DK12345678"`,
 		`"name":"Test ApS"`,
 		`"mainLineOfBusinessNaceV2":"6201"`,
-		`"date":"2024-3"`,
+		`"date":"2024-03"`,
 		`"from":5`,
 		`"homepage":"example.com"`,
-		`"http://example.com"`,
+		`"https://example.com"`,
 		`"Testvej 1"`,
 		`"1000 København K"`,
 		`"I normal drift"`,
 		`"Direktør"`,
-		`"voluntaryProviders":["http://example.com"]`,
+		`"voluntaryProviders":["https://example.com"]`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s in %s", want, body)
@@ -169,7 +169,29 @@ func TestUnknownStatusIsUpstreamDown(t *testing.T) {
 	ts := httptest.NewServer(New(Config{CVRURL: upstream.URL, TTL: 3600}).Handler())
 	defer ts.Close()
 	res, body := get(t, ts.URL+"/.well-known/opendiscovery/DK12345678.json")
-	if res.StatusCode != http.StatusGatewayTimeout || !strings.Contains(body, `"upstream_down"`) || !strings.Contains(body, "Unknown status: WAT") {
+	if res.StatusCode != http.StatusGatewayTimeout || !strings.Contains(body, `"upstream_down"`) || strings.Contains(body, "Unknown status") || strings.Contains(body, "error_detailed") {
+		t.Fatalf("%d %s", res.StatusCode, body)
+	}
+}
+
+func TestStatusWithoutNormal(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"hits":{"total":1,"hits":[{"_source":{"Vrvirksomhed":{
+				"cvrNummer":12345678,
+				"virksomhedMetadata":{"nyesteNavn":{"navn":"X"},"nyesteHovedbranche":{"branchekode":"620100"}},
+				"hjemmeside":[],
+				"virksomhedsstatus":[{"status":"UNDER KONKURS","periode":{"gyldigFra":"2021-01-01"}}],
+				"livsforloeb":[{"periode":{"gyldigFra":"2019-01-01","gyldigTil":"2021-05-01"}}],
+				"deltagerRelation":[]
+			}}}]}
+		}`)
+	}))
+	defer upstream.Close()
+	ts := httptest.NewServer(New(Config{CVRURL: upstream.URL, TTL: 3600}).Handler())
+	defer ts.Close()
+	res, body := get(t, ts.URL+"/.well-known/opendiscovery/DK12345678.json")
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Under konkursbehandling") || strings.Contains(body, "Ophørt") {
 		t.Fatalf("%d %s", res.StatusCode, body)
 	}
 }

@@ -107,7 +107,7 @@ func (s *Service) lookup(w http.ResponseWriter, r *http.Request) {
 	company, err := s.resolve(r.Context(), m[1], m[2])
 	if err != nil {
 		slog.Error("cvr", "err", err)
-		httpx.WriteJSON(w, http.StatusGatewayTimeout, false, apiErr{Type: "official", Err: "upstream_down", Detail: err.Error()})
+		httpx.WriteJSON(w, http.StatusGatewayTimeout, false, apiErr{Type: "official", Err: "upstream_down"})
 		return
 	}
 	if company == nil {
@@ -289,33 +289,40 @@ func translateHomepage(c *company, src map[string]any) error {
 }
 
 func translateStatus(c *company, src map[string]any) error {
-	var last map[string]any
-	reachedNormal := false
-	for _, raw := range asSlice(src["virksomhedsstatus"]) {
+	rows := asSlice(src["virksomhedsstatus"])
+	hasNormal := false
+	for _, raw := range rows {
 		status, _ := raw.(map[string]any)
-		if status == nil {
-			continue
+		if status != nil && asString(status["status"]) == "NORMAL" {
+			hasNormal = true
+			break
 		}
-		last = status
-		name := asString(status["status"])
-		if name == "NORMAL" {
-			reachedNormal = true
-		}
-		if !reachedNormal {
-			continue
-		}
-		tr, ok := statusText[name]
-		if !ok {
-			return fmt.Errorf("Unknown status: %s", name)
-		}
-		periode, _ := status["periode"].(map[string]any)
-		c.DkStatusTimeline = append(c.DkStatusTimeline, statusRow{
-			Date:       asString(periode["gyldigFra"]),
-			Value:      tr[0],
-			Translated: tr[1],
-		})
 	}
-	if last != nil {
+	if len(rows) > 0 {
+		reached := !hasNormal
+		for _, raw := range rows {
+			status, _ := raw.(map[string]any)
+			if status == nil {
+				continue
+			}
+			name := asString(status["status"])
+			if name == "NORMAL" {
+				reached = true
+			}
+			if !reached {
+				continue
+			}
+			tr, ok := statusText[name]
+			if !ok {
+				return fmt.Errorf("Unknown status: %s", name)
+			}
+			periode, _ := status["periode"].(map[string]any)
+			c.DkStatusTimeline = append(c.DkStatusTimeline, statusRow{
+				Date:       asString(periode["gyldigFra"]),
+				Value:      tr[0],
+				Translated: tr[1],
+			})
+		}
 		return nil
 	}
 	life, err := erstLast(src["livsforloeb"])
@@ -344,7 +351,7 @@ func translateEmployees(c *company, src map[string]any) {
 	if nym, _ := walk(src, "virksomhedMetadata", "nyesteErstMaanedsbeskaeftigelse").(map[string]any); len(nym) > 0 {
 		n, _ := asInt(nym["antalAnsatte"])
 		c.DkEmployees = &employees{
-			Date: asString(nym["aar"]) + "-" + asString(nym["maaned"]),
+			Date: yearMonth(nym["aar"], nym["maaned"]),
 			From: n,
 			To:   n,
 		}
@@ -363,10 +370,19 @@ func translateEmployees(c *company, src map[string]any) {
 		to, _ = strconv.Atoi(parts[2])
 	}
 	c.DkEmployees = &employees{
-		Date: asString(nym["aar"]) + "-" + asString(nym["maaned"]),
+		Date: yearMonth(nym["aar"], nym["maaned"]),
 		From: from,
 		To:   to,
 	}
+}
+
+func yearMonth(year, month any) string {
+	y := asString(year)
+	m := asString(month)
+	if n, err := strconv.Atoi(m); err == nil {
+		m = fmt.Sprintf("%02d", n)
+	}
+	return y + "-" + m
 }
 
 func translateManagement(c *company, src map[string]any) error {
@@ -449,14 +465,14 @@ func rewriteHomepage(c *company) {
 		return
 	}
 	if !schemeRE.MatchString(homepage) {
-		homepage = "http://" + homepage
+		homepage = "https://" + homepage
 	}
 	u, err := urlParse(homepage)
 	if err != nil || u.host == "" || u.host == "localhost" {
 		return
 	}
 	if u.scheme != "http" && u.scheme != "https" {
-		u.scheme = "http"
+		u.scheme = "https"
 	}
 	provider := u.scheme + "://" + u.host
 	if u.port != "" {
